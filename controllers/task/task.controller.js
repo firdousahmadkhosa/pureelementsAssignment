@@ -1,19 +1,5 @@
-
-const tasks = [];
-
-// Generate a unique task ID
-function generateTaskId() {
-  return (tasks.length + 1).toString();
-};
-
-// Task for input validation
-function validateTask(task) {
-  if (!task.title || !task.description || task.completed === undefined) {
-    throw new Error("Task is missing required fields.");
-  }
-};
-
-
+const db = require("../../models");
+const Task = db.tasks;
 
 /**
  * Create a new task into the tasks array
@@ -23,17 +9,25 @@ function validateTask(task) {
  * @returns {JSON}
  */
 exports.create = async (req, res, next) => {
+  req.checkBody("title", "Task title is mandatory").notEmpty();
+  req.checkBody("description", "Task description is madatory").notEmpty();
+  const errors = req.validationErrors();
+  if (errors) {
+    return res.status(400).send({
+      message: "Missing fields or invalid data",
+      errors,
+    });
+  }
   try {
-    const task = req.body;
-    validateTask(task);
-    task.id = generateTaskId();
-    tasks.push(task);
-    res.status(201).json(task);
+    const { title, description } = req.body;
+    const completed = req.body.completed ? req.body.completed : false;
+    const newTask = await Task.create({ title, description, completed });
+    res.status(201).json(newTask);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
-
 
 /**
  * Get a list of tasks with pagination
@@ -43,32 +37,41 @@ exports.create = async (req, res, next) => {
  * @returns {JSON}
  */
 exports.read = async (req, res, next) => {
-  const page = parseInt(req.query.page) || 1;
-  const pageSize = parseInt(req.query.pageSize) || 10;
+ try {
+   const page = parseInt(req.query.page) || 1;
+   const pageSize = parseInt(req.query.pageSize) || 10;
 
-  const startIndex = (page - 1) * pageSize;
-  const endIndex = startIndex + pageSize;
+   const startIndex = (page - 1) * pageSize;
+   const endIndex = startIndex + pageSize;
 
-  // Slice the tasks array to get a subset of tasks based on pagination parameters
-  const tasksSubset = tasks.slice(startIndex, endIndex);
+   const tasks = await Task.findAndCountAll({
+     limit: pageSize,
+     offset: startIndex,
+   });
 
-  res.json(tasksSubset);
+   res.json(tasks);
+ } catch (error) {
+   console.error(error);
+   res.status(500).json({ error: "Internal server error" });
+ }
 };
 
-
-
 /**
- * Get a list of tasks with pagination
+ * Get a list of tasks
  * @param {*} req
  * @param {*} res
  * @param {*} next
  * @returns {JSON}
  */
 exports.readAll = async (req, res, next) => {
-  res.json(tasks);
+  try {
+    const tasks = await Task.findAll();
+    res.json(tasks);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 };
-
-
 
 /**
  * Get details of a specific task
@@ -78,16 +81,25 @@ exports.readAll = async (req, res, next) => {
  * @returns {JSON}
  */
 exports.singleTask = async (req, res, next) => {
-  const taskId = req.params.id;
-  const task = tasks.find((t) => t.id === taskId);
-  if (task) {
+  try {
+    const uuidRegex =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const testValidUUID = uuidRegex.test(req.params.id);
+    if (!testValidUUID) {
+      return res.status(404).json({ error: "Task id must be valid!" });
+    }
+    const task = await Task.findByPk(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
     res.json(task);
-  } else {
-    res.status(404).json({ error: "Task not found" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
-;
-
 /**
  * Update details of a specific task
  * @param {*} req
@@ -96,24 +108,41 @@ exports.singleTask = async (req, res, next) => {
  * @returns {JSON}
  */
 exports.update = async (req, res, next) => {
-  const taskId = req.params.id;
-  const taskIndex = tasks.findIndex((t) => t.id === taskId);
-
-  if (taskIndex !== -1) {
-    try {
-      const updatedTask = req.body;
-      validateTask(updatedTask);
-      tasks[taskIndex] = { ...tasks[taskIndex], ...updatedTask };
-      res.json(tasks[taskIndex]);
-    } catch (error) {
-      res.status(400).json({ error: error.message });
+  req.checkBody("title", "Task title is mandatory").notEmpty();
+  req.checkBody("description", "Task description is madatory").notEmpty();
+  const errors = req.validationErrors();
+  if (errors) {
+    return res.status(400).send({
+      message: "Missing fields or invalid data",
+      errors,
+    });
+  }
+  try {
+    const uuidRegex =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const testValidUUID = uuidRegex.test(req.params.id);
+    if (!testValidUUID) {
+      return res.status(404).json({ error: "Task id must be valid!" });
     }
-  } else {
-    res.status(404).json({ error: "Task not found" });
+
+    const task = await Task.findByPk(req.params.id);
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    const { title, description } = req.body;
+    const completed = req.body.completed ? req.body.completed : false;
+    task.title = title;
+    task.description = description;
+    task.completed = completed || false;
+
+    await task.save();
+    res.json(task);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
-
-
 
 /**
  * Delete a specific task
@@ -123,13 +152,24 @@ exports.update = async (req, res, next) => {
  * @returns {JSON}
  */
 exports.delete = async (req, res, next) => {
-   const taskId = req.params.id;
-   const taskIndex = tasks.findIndex((t) => t.id === taskId);
+  try {
+    const uuidRegex =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const testValidUUID = uuidRegex.test(req.params.id);
+    if (!testValidUUID) {
+      return res.status(404).json({ error: "Task id must be valid!" });
+    }
+    const task = await Task.findByPk(req.params.id);
 
-   if (taskIndex !== -1) {
-     tasks.splice(taskIndex, 1);
-     res.status(200).send("task deleted successfuly");
-   } else {
-     res.status(404).json({ error: "Task not found" });
-   }
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    await task.destroy();
+ res.status(200).send("task deleted successfuly");
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+
 };
